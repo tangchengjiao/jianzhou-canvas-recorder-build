@@ -1,0 +1,61 @@
+name: Build macOS Universal Beta
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: macOS Universal DMG
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CI: "true"
+      APPLE_SIGNING_IDENTITY: "-"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build Universal app and DMG
+        run: pnpm desktop:build:mac
+
+      - name: Verify and package macOS release
+        run: pnpm desktop:package:mac
+
+      - name: Upload macOS release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jianzhou-canvas-recorder-macos-universal-beta
+          path: artifacts/macos/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

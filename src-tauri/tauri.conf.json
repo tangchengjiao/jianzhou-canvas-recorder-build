@@ -1,0 +1,56 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Jianzhou Canvas Recorder Beta",
+  "version": "0.1.0-beta.1",
+  "identifier": "com.jianzhou.canvasrecorder",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "corepack pnpm dev",
+    "beforeBuildCommand": "corepack pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "见舟画布录制 · 内测版",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; media-src 'self' asset: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' asset: data:; script-src 'self'; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "category": "Productivity",
+    "shortDescription": "本地白板演示、提词与自动运镜录制工具",
+    "longDescription": "基于 Excalidraw 的本地课程演示与录制工作台，支持提词器、摄像头、麦克风、PDF、Markdown、静态 HTML 和自动运镜。",
+    "copyright": "Copyright © 2026 Jianzhou AI",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "minimumWebview2Version": "120.0.0.0",
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
