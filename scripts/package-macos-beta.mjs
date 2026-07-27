@@ -62,7 +62,9 @@ const architectures = run("/usr/bin/lipo", ["-archs", executablePath])
   .split(/\s+/)
   .filter(Boolean)
   .sort();
-const expectedArchitectures = ["aarch64", "x86_64"];
+// Rust names the target aarch64-apple-darwin, while Apple's `lipo` reports
+// that architecture as arm64.
+const expectedArchitectures = ["arm64", "x86_64"];
 if (
   architectures.length !== expectedArchitectures.length ||
   expectedArchitectures.some((architecture) => !architectures.includes(architecture))
