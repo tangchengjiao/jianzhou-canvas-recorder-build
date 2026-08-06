@@ -50,6 +50,8 @@ jobs:
 
       - name: Browser regression suite
         run: pnpm verify
+        env:
+          EDGE_PATH: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
       - name: Build Universal app and DMG
         run: pnpm desktop:build:mac
