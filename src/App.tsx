@@ -61,6 +61,12 @@ import {
   type MediaInputDevices,
 } from "./core/mediaInputs";
 import {
+  getMacMediaRecoveryMessage,
+  isMacTauriRuntime,
+  openMacMediaPrivacySettings,
+  type MacMediaTarget,
+} from "./platform/macosMedia";
+import {
   clearDocumentSession,
   clearDocumentSessionAndAsset,
   loadDocumentAsset,
@@ -167,6 +173,11 @@ type LastRecording = {
 };
 
 type MicrophoneTestState = "idle" | "testing" | "ready" | "error";
+
+type MediaRecoveryIssue = {
+  message: string;
+  showMacSettings: boolean;
+};
 
 const DRAWING_TOOLS = new Set([
   "freedraw",
@@ -492,6 +503,10 @@ export default function App() {
     useState<MicrophoneTestState>("idle");
   const [microphoneLevelDb, setMicrophoneLevelDb] = useState(-96);
   const [microphonePeakDb, setMicrophonePeakDb] = useState(-96);
+  const [cameraRecoveryIssue, setCameraRecoveryIssue] =
+    useState<MediaRecoveryIssue | null>(null);
+  const [microphoneRecoveryIssue, setMicrophoneRecoveryIssue] =
+    useState<MediaRecoveryIssue | null>(null);
   const [editorTheme, setEditorTheme] = useState<"light" | "dark">("light");
   const [notice, setNotice] = useState(
     "稳定模式已就绪。录制控制、提词器和预览都不会进入视频。",
@@ -1790,6 +1805,25 @@ export default function App() {
     [],
   );
 
+  const openMediaPrivacySettings = useCallback(
+    async (target: MacMediaTarget) => {
+      try {
+        await openMacMediaPrivacySettings(target);
+        const label = target === "camera" ? "摄像头" : "麦克风";
+        setNotice(`已打开 macOS ${label}权限设置；修改后请完全退出并重新打开应用。`);
+        recordDiagnostic("macos.media-settings.opened", { target });
+      } catch (error) {
+        setNotice("无法自动打开系统设置，请手动进入“系统设置 → 隐私与安全性”。");
+        recordDiagnostic(
+          "macos.media-settings.failed",
+          { target, message: error instanceof Error ? error.message : String(error) },
+          "warning",
+        );
+      }
+    },
+    [],
+  );
+
   const setCamera = useCallback(
     async (enabled: boolean, deviceId = selectedCameraId) => {
       if (!enabled) {
@@ -1798,7 +1832,12 @@ export default function App() {
       }
 
       setCameraBusy(true);
-      setNotice("正在检查摄像头…");
+      setCameraRecoveryIssue(null);
+      setNotice(
+        isMacTauriRuntime()
+          ? "正在请求摄像头；首次使用请在 macOS 权限弹窗中选择“允许”…"
+          : "正在检查摄像头…",
+      );
       try {
         const session = await mediaManagerRef.current.startCamera(
           deviceId || undefined,
@@ -1808,6 +1847,7 @@ export default function App() {
         compositorRef.current?.setWebcamConfig({ enabled: true });
         setCameraMonitorStream(session.stream);
         setCameraEnabled(true);
+        setCameraRecoveryIssue(null);
         setPanel("preview");
         setNotice("摄像头监看已开启；输出预览中的画面会进入成片。");
         recordDiagnostic("camera.started", {
@@ -1831,13 +1871,33 @@ export default function App() {
       } catch (error) {
         if (!mountedRef.current) return;
         const mapped = mapMediaInputError(error, "camera");
+        const isMac = isMacTauriRuntime();
+        const recoveryMessage = isMac
+          ? getMacMediaRecoveryMessage(mapped, "camera")
+          : mapped.message;
         compositorRef.current?.setWebcamSource(null);
         setCameraMonitorStream(null);
         setCameraEnabled(false);
-        setNotice(mapped.message);
+        setCameraRecoveryIssue({
+          message: recoveryMessage,
+          showMacSettings: isMac,
+        });
+        setNotice(recoveryMessage);
+        const original = mapped.originalError;
         recordDiagnostic(
           "camera.failed",
-          { code: mapped.code, message: mapped.message },
+          {
+            code: mapped.code,
+            message: mapped.message,
+            originalName:
+              original && typeof original === "object" && "name" in original
+                ? String(original.name)
+                : null,
+            originalMessage:
+              original && typeof original === "object" && "message" in original
+                ? String(original.message)
+                : null,
+          },
           "error",
         );
       } finally {
@@ -1872,9 +1932,15 @@ export default function App() {
     }
 
     setMicrophoneTestState("testing");
+    setMicrophoneRecoveryIssue(null);
     setMicrophoneLevelDb(-96);
     setMicrophonePeakDb(-96);
-    setNotice("正在监听麦克风电平，测试不会保存声音…");
+    setNotice(
+      isMacTauriRuntime()
+        ? "正在请求麦克风；首次使用请在 macOS 权限弹窗中选择“允许”…"
+        : "正在监听麦克风电平，测试不会保存声音…",
+    );
+    let context: AudioContext | null = null;
     try {
       const session = await mediaManagerRef.current.acquireMicrophone(
         selectedMicrophoneId || undefined,
@@ -1884,7 +1950,10 @@ export default function App() {
         return;
       }
 
-      const context = new AudioContext();
+      context = new AudioContext();
+      if (context.state === "suspended") {
+        await context.resume();
+      }
       const source = context.createMediaStreamSource(session.stream);
       const analyser = context.createAnalyser();
       analyser.fftSize = 1024;
@@ -1917,6 +1986,8 @@ export default function App() {
         6_000,
       );
       microphoneTestRef.current = { context, frameId, timeoutId };
+      context = null;
+      setMicrophoneRecoveryIssue(null);
       setNotice("请正常说话；绿色区域表示音量适合录制。");
       recordDiagnostic("microphone.test.started", {
         sampleRate: session.track.getSettings().sampleRate,
@@ -1925,12 +1996,33 @@ export default function App() {
       void refreshDevices();
     } catch (error) {
       const mapped = mapMediaInputError(error, "microphone");
+      if (context) void context.close().catch(() => undefined);
       mediaManagerRef.current.releaseMicrophone();
       setMicrophoneTestState("error");
-      setNotice(mapped.message);
+      const isMac = isMacTauriRuntime();
+      const recoveryMessage = isMac
+        ? getMacMediaRecoveryMessage(mapped, "microphone")
+        : mapped.message;
+      setMicrophoneRecoveryIssue({
+        message: recoveryMessage,
+        showMacSettings: isMac,
+      });
+      setNotice(recoveryMessage);
+      const original = mapped.originalError;
       recordDiagnostic(
         "microphone.test.failed",
-        { code: mapped.code, message: mapped.message },
+        {
+          code: mapped.code,
+          message: mapped.message,
+          originalName:
+            original && typeof original === "object" && "name" in original
+              ? String(original.name)
+              : null,
+          originalMessage:
+            original && typeof original === "object" && "message" in original
+              ? String(original.message)
+              : null,
+        },
         "warning",
       );
     }
@@ -3263,6 +3355,30 @@ export default function App() {
                 </span>
               </div>
             )}
+            {microphoneRecoveryIssue && (
+              <div className="media-recovery" role="alert">
+                <strong>麦克风需要处理</strong>
+                <p>{microphoneRecoveryIssue.message}</p>
+                <div className="media-recovery__actions">
+                  {microphoneRecoveryIssue.showMacSettings && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void openMediaPrivacySettings("microphone")}
+                    >
+                      打开 macOS 权限设置
+                    </button>
+                  )}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void startMicrophoneTest()}
+                  >
+                    重新测试
+                  </button>
+                </div>
+              </div>
+            )}
             {includeMicrophone && (
               <p className="settings-warning">
                 已关闭浏览器降噪、回声消除和自动增益，并优先使用 48kHz 单声道；这能降低负载，但不能保证绕过系统 Fortemedia/Realtek 驱动。
@@ -3370,6 +3486,31 @@ export default function App() {
               <span>录制结束后保持预览</span>
               <b>{keepCameraAfterRecording ? "开启" : "关闭"}</b>
             </button>
+            {cameraRecoveryIssue && (
+              <div className="media-recovery" role="alert">
+                <strong>摄像头需要处理</strong>
+                <p>{cameraRecoveryIssue.message}</p>
+                <div className="media-recovery__actions">
+                  {cameraRecoveryIssue.showMacSettings && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void openMediaPrivacySettings("camera")}
+                    >
+                      打开 macOS 权限设置
+                    </button>
+                  )}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void setCamera(true)}
+                    disabled={cameraBusy}
+                  >
+                    重试摄像头
+                  </button>
+                </div>
+              </div>
+            )}
             <p className="settings-note">
               可直接拖动摄像头监看画面；松手后位置会保存并同步进入成片，开始录制后自动锁定。监看层不是 Excalidraw 元素。默认在录制结束、切换标签页，或未录制时离开当前窗口后关闭摄像头。
             </p>

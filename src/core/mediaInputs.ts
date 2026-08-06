@@ -1,4 +1,8 @@
-export const MEDIA_INPUT_TIMEOUT_MS = 8_000;
+// macOS may leave the native permission sheet open while the user reads it.
+// Keep permission acquisition generous, then use a shorter deadline only for
+// starting an already-authorised device.
+export const MEDIA_PERMISSION_TIMEOUT_MS = 120_000;
+export const MEDIA_DEVICE_START_TIMEOUT_MS = 20_000;
 
 export type MediaInputTarget = "devices" | "camera" | "microphone";
 
@@ -93,7 +97,7 @@ const ERROR_MESSAGES: Record<
     overconstrained: "摄像头不支持所请求的参数。",
     aborted: "摄像头请求已取消。",
     security: "当前页面无权访问摄像头。",
-    timeout: "摄像头在 8 秒内没有准备完成。",
+    timeout: "等待摄像头授权或设备启动超时。",
     disposed: "媒体设备管理器已释放。",
     unknown: "打开摄像头时发生未知错误。",
   },
@@ -105,7 +109,7 @@ const ERROR_MESSAGES: Record<
     overconstrained: "麦克风不支持所请求的参数。",
     aborted: "麦克风请求已取消。",
     security: "当前页面无权访问麦克风。",
-    timeout: "麦克风在 8 秒内没有准备完成。",
+    timeout: "等待麦克风授权或设备启动超时。",
     disposed: "媒体设备管理器已释放。",
     unknown: "打开麦克风时发生未知错误。",
   },
@@ -187,6 +191,39 @@ const detachVideo = (video: HTMLVideoElement | null) => {
   if (!video) return;
   video.pause();
   video.srcObject = null;
+  video.remove();
+};
+
+const createCameraVideo = (stream: MediaStream) => {
+  if (typeof document === "undefined") {
+    throw createMediaInputError("unsupported", "camera");
+  }
+
+  const video = document.createElement("video");
+  video.autoplay = true;
+  video.defaultMuted = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.disablePictureInPicture = true;
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.dataset.mediaInputSource = "camera";
+
+  // WKWebView is more reliable when the media element is connected to the DOM.
+  // Keep it paintable but completely outside the visible/interactive viewport.
+  Object.assign(video.style, {
+    position: "fixed",
+    left: "-10000px",
+    top: "0",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+    pointerEvents: "none",
+  });
+  document.body.append(video);
+  video.srcObject = stream;
+  return video;
 };
 
 const requestUserMedia = (
@@ -346,6 +383,21 @@ const microphoneConstraintAttempts = (
   return [advanced, { deviceId }, {}];
 };
 
+const cameraConstraintAttempts = (
+  requestedDeviceId: string | null,
+): readonly (MediaTrackConstraints | true)[] => {
+  const deviceId = deviceConstraint(requestedDeviceId);
+  const preferred: MediaTrackConstraints = {
+    deviceId,
+    width: { ideal: 640 },
+    height: { ideal: 360 },
+    frameRate: { ideal: 30, max: 30 },
+  };
+
+  if (!requestedDeviceId) return [preferred, true];
+  return [preferred, { deviceId }, { width: { ideal: 640 }, height: { ideal: 360 } }, true];
+};
+
 const canFallbackMicrophoneRequest = (error: MediaInputError) =>
   ![
     "permission-denied",
@@ -353,6 +405,8 @@ const canFallbackMicrophoneRequest = (error: MediaInputError) =>
     "timeout",
     "disposed",
   ].includes(error.code);
+
+const canFallbackCameraRequest = canFallbackMicrophoneRequest;
 
 export class MediaInputManager {
   private cameraSession: CameraSession | null = null;
@@ -425,89 +479,83 @@ export class MediaInputManager {
     }
 
     const requestId = ++this.cameraRequestId;
-    const deadline = Date.now() + MEDIA_INPUT_TIMEOUT_MS;
+    const permissionDeadline = Date.now() + MEDIA_PERMISSION_TIMEOUT_MS;
     let stream: MediaStream | null = null;
     let video: HTMLVideoElement | null = null;
+    let lastError: MediaInputError | null = null;
 
-    try {
-      stream = await requestUserMedia(
-        "camera",
-        {
-          audio: false,
-          video: {
-            deviceId: deviceConstraint(requestedDeviceId),
-            width: { ideal: 640 },
-            height: { ideal: 360 },
-            frameRate: { ideal: 30, max: 30 },
+    const attempts = cameraConstraintAttempts(requestedDeviceId);
+    for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex += 1) {
+      try {
+        const remainingPermissionMs = permissionDeadline - Date.now();
+        if (remainingPermissionMs <= 0) {
+          throw createMediaInputError("timeout", "camera", lastError);
+        }
+        stream = await requestUserMedia(
+          "camera",
+          { audio: false, video: attempts[attemptIndex] },
+          remainingPermissionMs,
+        );
+        this.assertCurrentCameraRequest(requestId);
+
+        const track = stream.getVideoTracks()[0];
+        if (!track) {
+          throw createMediaInputError("not-found", "camera");
+        }
+
+        video = createCameraVideo(stream);
+        await withTimeout(
+          video.play(),
+          "camera",
+          MEDIA_DEVICE_START_TIMEOUT_MS,
+        );
+        await waitForCurrentVideoFrame(video, MEDIA_DEVICE_START_TIMEOUT_MS);
+        this.assertCurrentCameraRequest(requestId);
+
+        const session: CameraSession = {
+          stream,
+          track,
+          video,
+          deviceId: track.getSettings().deviceId ?? requestedDeviceId ?? "",
+          requestedDeviceId,
+        };
+        track.addEventListener(
+          "ended",
+          () => {
+            if (this.cameraSession?.track !== track) return;
+            const endedSession = this.cameraSession;
+            this.cameraSession = null;
+            detachVideo(endedSession.video);
+            stopStream(endedSession.stream);
           },
-        },
-        MEDIA_INPUT_TIMEOUT_MS,
-      );
-      this.assertCurrentCameraRequest(requestId);
+          { once: true },
+        );
 
-      const track = stream.getVideoTracks()[0];
-      if (!track) {
-        throw createMediaInputError("not-found", "camera");
-      }
+        const previous = this.cameraSession;
+        this.cameraSession = session;
+        if (previous) this.stopCameraSession(previous);
+        return session;
+      } catch (error) {
+        detachVideo(video);
+        stopStream(stream);
+        video = null;
+        stream = null;
+        if (this.disposed) {
+          throw createMediaInputError("disposed", "camera", error);
+        }
+        if (requestId !== this.cameraRequestId) {
+          throw createMediaInputError("aborted", "camera", error);
+        }
 
-      if (typeof document === "undefined") {
-        throw createMediaInputError("unsupported", "camera");
+        lastError = mapMediaInputError(error, "camera");
+        const hasFallback = attemptIndex < attempts.length - 1;
+        if (!hasFallback || !canFallbackCameraRequest(lastError)) {
+          throw lastError;
+        }
       }
-      video = document.createElement("video");
-      video.autoplay = true;
-      video.defaultMuted = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "auto";
-      video.srcObject = stream;
-
-      let remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        throw createMediaInputError("timeout", "camera");
-      }
-      await withTimeout(video.play(), "camera", remainingMs);
-
-      remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        throw createMediaInputError("timeout", "camera");
-      }
-      await waitForCurrentVideoFrame(video, remainingMs);
-      this.assertCurrentCameraRequest(requestId);
-
-      const session: CameraSession = {
-        stream,
-        track,
-        video,
-        deviceId: track.getSettings().deviceId ?? requestedDeviceId ?? "",
-        requestedDeviceId,
-      };
-      track.addEventListener(
-        "ended",
-        () => {
-          if (this.cameraSession?.track !== track) return;
-          const endedSession = this.cameraSession;
-          this.cameraSession = null;
-          detachVideo(endedSession.video);
-          stopStream(endedSession.stream);
-        },
-        { once: true },
-      );
-
-      const previous = this.cameraSession;
-      this.cameraSession = session;
-      if (previous) this.stopCameraSession(previous);
-      return session;
-    } catch (error) {
-      detachVideo(video);
-      stopStream(stream);
-      if (this.disposed) {
-        throw createMediaInputError("disposed", "camera", error);
-      }
-      if (requestId !== this.cameraRequestId) {
-        throw createMediaInputError("aborted", "camera", error);
-      }
-      throw mapMediaInputError(error, "camera");
     }
+
+    throw lastError ?? createMediaInputError("unknown", "camera");
   }
 
   stopCamera() {
@@ -533,7 +581,7 @@ export class MediaInputManager {
     }
 
     const requestId = ++this.microphoneRequestId;
-    const deadline = Date.now() + MEDIA_INPUT_TIMEOUT_MS;
+    const deadline = Date.now() + MEDIA_PERMISSION_TIMEOUT_MS;
     let stream: MediaStream | null = null;
     let lastError: MediaInputError | null = null;
 

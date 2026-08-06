@@ -12,6 +12,8 @@ const edgeCandidates = [
   process.env.EDGE_PATH,
   "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
   "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ].filter(Boolean);
 
 const assert = (condition, message) => {
@@ -27,7 +29,7 @@ const resolveEdgeExecutable = async () => {
       // Try the next configured or conventional Edge location.
     }
   }
-  throw new Error("Microsoft Edge was not found. Set EDGE_PATH and retry.");
+  throw new Error("A compatible Chromium browser was not found. Set EDGE_PATH and retry.");
 };
 
 const runProcess = (command, args, timeoutMs) =>
@@ -203,6 +205,10 @@ try {
     state: "visible",
     timeout: 5_000,
   });
+  assert(
+    (await page.locator('video[data-media-input-source="camera"]').count()) === 1,
+    "The WebKit-compatible camera source video is not attached to the DOM.",
+  );
 
   const webcamBeforeRecording = await outputCanvas.evaluate((canvas) => ({
     ready: canvas.dataset.webcamReady,
@@ -322,6 +328,11 @@ try {
     state: "detached",
     timeout: 5_000,
   });
+  await page.waitForFunction(
+    () => !document.querySelector('video[data-media-input-source="camera"]'),
+    undefined,
+    { timeout: 5_000 },
+  );
   await page.waitForFunction(
     () =>
       document.querySelector(".output-preview canvas")?.dataset.webcamReady ===

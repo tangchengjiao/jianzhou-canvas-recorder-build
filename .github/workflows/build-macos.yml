@@ -48,8 +48,30 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Browser regression suite
+        run: pnpm verify
+
       - name: Build Universal app and DMG
         run: pnpm desktop:build:mac
+
+      - name: Launch packaged application
+        shell: bash
+        run: |
+          APPS=(src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app)
+          APP_PATH="${APPS[0]}"
+          test -d "$APP_PATH"
+          "$APP_PATH/Contents/MacOS/jianzhou-canvas-recorder" > /tmp/jianzhou-macos-launch.log 2>&1 &
+          APP_PID=$!
+          for attempt in {1..10}; do
+            if kill -0 "$APP_PID" 2>/dev/null; then
+              sleep 1
+            else
+              cat /tmp/jianzhou-macos-launch.log
+              exit 1
+            fi
+          done
+          kill "$APP_PID"
+          wait "$APP_PID" || true
 
       - name: Verify and package macOS release
         run: pnpm desktop:package:mac

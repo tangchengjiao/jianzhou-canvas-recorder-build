@@ -50,6 +50,7 @@ const executablePath = join(
   "MacOS",
   "jianzhou-canvas-recorder",
 );
+const infoPlistPath = join(appPath, "Contents", "Info.plist");
 
 const run = (command, args) =>
   execFileSync(command, args, {
@@ -82,6 +83,20 @@ run("/usr/bin/codesign", [
   appPath,
 ]);
 run("/usr/bin/hdiutil", ["verify", dmgPath]);
+
+const cameraUsageDescription = run("/usr/libexec/PlistBuddy", [
+  "-c",
+  "Print :NSCameraUsageDescription",
+  infoPlistPath,
+]);
+const microphoneUsageDescription = run("/usr/libexec/PlistBuddy", [
+  "-c",
+  "Print :NSMicrophoneUsageDescription",
+  infoPlistPath,
+]);
+if (!cameraUsageDescription || !microphoneUsageDescription) {
+  throw new Error("The packaged app is missing camera or microphone usage descriptions.");
+}
 
 const releaseName = `jianzhou-canvas-recorder-beta-${version}-macos-universal`;
 const releaseDir = join(root, "artifacts", "macos", releaseName);
@@ -158,6 +173,8 @@ const manifest = {
     universalBinary: true,
     codeSignatureVerified: true,
     diskImageVerified: true,
+    cameraUsageDescription,
+    microphoneUsageDescription,
   },
 };
 await writeFile(
