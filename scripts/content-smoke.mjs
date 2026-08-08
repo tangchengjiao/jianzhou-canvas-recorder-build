@@ -174,11 +174,14 @@ const drawGesture = async (page, canvas, options = {}) => {
 };
 
 const clickDocumentToolbar = async (page, selector) => {
-  const toolbar = page.locator(".document-toolbar");
-  if (!(await toolbar.isVisible())) {
-    await page.locator(".document-toolbar-handle").click();
+  const tool = page.locator(selector);
+  if (!(await tool.isVisible().catch(() => false))) {
+    const handle = page.locator(".document-toolbar-handle");
+    await handle.waitFor({ state: "visible" });
+    await handle.click();
+    await tool.waitFor({ state: "visible" });
   }
-  await page.locator(selector).click();
+  await tool.click();
 };
 
 const browser = await chromium.launch({
