@@ -9,7 +9,7 @@
 
 1. `2026-07-15 12:53:54`，Windows Application Event 1000：`chrome.exe` APPCRASH，异常码 `0xc06d007e`，故障模块 `KERNELBASE.dll`。
 2. `2026-07-15 12:55:07`，Windows Application Event 1000：`AUDIODG.EXE` APPCRASH，故障模块 `FMAPO64.dll 90.78.10.67`，异常码 `0xc0000005`。
-3. Chrome Crashpad 留下转储：`C:\Users\10336\AppData\Local\Google\Chrome\User Data\Crashpad\reports\722d0cd2-eea4-48b4-a926-6747370de5cd.dmp`，约 934 KB。
+3. Chrome Crashpad 在用户本地数据目录留下约 934 KB 的转储文件。
 
 `FMAPO64.dll` 属于 Fortemedia/Realtek 音频效果链。旧实现默认开启麦克风，并请求回声消除、降噪和自动增益，因此录制开始时会直接进入这条不稳定的驱动路径。
 

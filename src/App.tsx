@@ -51,6 +51,7 @@ import {
   type WebcamSize,
 } from "./core/compositor";
 import {
+  clearDiagnostics,
   downloadDiagnostics,
   installGlobalDiagnostics,
   recordDiagnostic,
@@ -2296,6 +2297,7 @@ export default function App() {
       const filename = createRecordingFilename(blob);
       let savedDirectoryName: string | null = null;
       let destinationFallbackMessage = "";
+      let stagingCleanupMessage = "";
       if (recordingDestinationMode === "folder" && recordingDirectory) {
         try {
           const permission = await queryRecordingDirectoryPermission(
@@ -2361,8 +2363,27 @@ export default function App() {
         });
         await projectCoordinatorRef.current?.flush();
       }
+      if (
+        savedDirectoryName &&
+        sinkStats?.kind === "opfs" &&
+        sinkStats.sessionId
+      ) {
+        try {
+          await deleteOPFSRecordingSession(sinkStats.sessionId);
+          recordDiagnostic("recording.staging.cleaned", {
+            status: "deleted-after-folder-save",
+          });
+        } catch (error) {
+          stagingCleanupMessage = "视频已保存，但本机恢复中心副本清理失败，可在设置中手动删除。";
+          recordDiagnostic(
+            "recording.staging.cleanup.failed",
+            { message: errorMessage(error) },
+            "warning",
+          );
+        }
+      }
       setNotice(
-        destinationFallbackMessage ||
+        destinationFallbackMessage || stagingCleanupMessage ||
           `已保存 ${filename} 到${
             savedDirectoryName
               ? `“${savedDirectoryName}”文件夹`
@@ -3712,10 +3733,20 @@ export default function App() {
                   cameraEnabled,
                   compositor: compositorRef.current?.getStats(),
                 });
-                setNotice("诊断日志 JSON 已保存到浏览器下载目录。");
+                setNotice("已导出脱敏诊断日志；分享前仍建议快速检查内容。");
               }}
             >
-              导出诊断日志
+              导出脱敏诊断日志
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                clearDiagnostics();
+                setNotice("本机诊断记录已清除。");
+              }}
+            >
+              清除本机诊断记录
             </button>
           </div>
         </section>

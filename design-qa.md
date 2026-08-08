@@ -4,7 +4,7 @@ Date: 2026-07-15
 
 ## Evidence
 
-- Visual source: `C:\Users\10336\AppData\Local\Temp\codex-clipboard-ce34ff4a-10e1-47ef-b90a-184bb55e23d5.png`
+- Visual source: 用户提供的产品参考截图（本地临时文件，不纳入分享包）
 - Implemented desktop state: `artifacts/design-qa-current.png`
 - Implemented narrow-window state: `artifacts/design-qa-980x720.png`
 - Desktop viewport/state: 2048×1080, blank Excalidraw canvas, workbench closed, teleprompter open, camera monitor active, idle recording.

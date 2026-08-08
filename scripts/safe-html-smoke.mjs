@@ -171,10 +171,16 @@ try {
       .panel{position:absolute;left:160px;top:90px;width:640px;height:360px;
         border-radius:32px;background:#ff4f76;box-shadow:0 24px 70px rgba(0,0,0,.28)}
       .panel h1{margin:48px;color:#fff;font:700 72px/1.1 Arial,sans-serif}
+      .escaped-network{background-image:u\\72l(https://example.invalid/escaped-css.png)}
     </style><script>globalThis.__staticHtmlPwned=1</script></head><body>
-      <main class="panel" onclick="globalThis.__staticHtmlPwned=2"><h1>视觉 HTML</h1></main>
+      <main class="panel escaped-network" onclick="globalThis.__staticHtmlPwned=2"><h1>视觉 HTML</h1></main>
+      <img srcset="https://example.invalid/tracker-1x.png 1x, https://example.invalid/tracker-2x.png 2x" alt="">
       <svg width="180" height="180" viewBox="0 0 180 180" style="position:absolute;right:80px;bottom:60px">
+        <defs><circle id="safe-dot" cx="24" cy="24" r="18" /></defs>
         <circle cx="90" cy="90" r="76" fill="#5ee6a8" />
+        <use href="#safe-dot" fill="#fff" />
+        <use href="https://example.invalid/external-symbol.svg#dot" />
+        <feImage href="https://example.invalid/filter.png" />
       </svg>
     </body></html>`;
     const visualAdapter = await StaticHtmlContentAdapter.load(visualSource, {

@@ -426,6 +426,44 @@ try {
     `Web HostBridge pretended to provide desktop capabilities: ${JSON.stringify(productKernel)}`,
   );
 
+  const importBudgets = await page.evaluate(async () => {
+    const imageModule = await import("/src/content/imageAdapter.ts");
+    const pdfModule = await import("/src/content/pdfAdapter.ts");
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47], 0);
+    png.set([0x49, 0x48, 0x44, 0x52], 12);
+    const view = new DataView(png.buffer);
+    view.setUint32(16, imageModule.IMAGE_IMPORT_LIMITS.maxDimension + 1);
+    view.setUint32(20, 1);
+    let imageRejected = false;
+    try {
+      await imageModule.ImageContentAdapter.load(
+        new Blob([png], { type: "image/png" }),
+      );
+    } catch (error) {
+      imageRejected = String(error?.message ?? error).includes("像素尺寸过大");
+    }
+
+    class OversizedPdfBlob extends Blob {
+      get size() {
+        return pdfModule.PDF_IMPORT_LIMITS.maxBytes + 1;
+      }
+    }
+    let pdfRejected = false;
+    try {
+      await pdfModule.PdfContentAdapter.load(
+        new OversizedPdfBlob(["%PDF-1.4"], { type: "application/pdf" }),
+      );
+    } catch (error) {
+      pdfRejected = String(error?.message ?? error).includes("轻量导入限制");
+    }
+    return { imageRejected, pdfRejected };
+  });
+  assert(
+    importBudgets.imageRejected && importBudgets.pdfRejected,
+    `Import budgets were not enforced before decoding: ${JSON.stringify(importBudgets)}`,
+  );
+
   const imageInput = page.locator(
     '.content-file-input[type="file"][accept^="image/"]',
   );

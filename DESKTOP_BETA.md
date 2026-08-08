@@ -9,7 +9,7 @@
 
 ## 安装
 
-运行 `Jianzhou Canvas Recorder Beta_0.1.0-beta.1_x64-setup.exe`。
+运行 `Jianzhou-Canvas-Recorder-Beta-0.1.0-beta.3-Windows-x64-setup.exe`。
 
 当前内测包尚未购买代码签名证书，Windows SmartScreen 可能显示“未知发布者”。仅从项目交付目录获取安装包，并先核对随包提供的 SHA-256。
 
@@ -28,5 +28,4 @@
 - Windows 版本、屏幕缩放比例和 WebView2 版本。
 - 摄像头/麦克风型号。
 - 录制时长、输出格式、文件大小和是否能在剪映/VLC/系统播放器打开。
-- 软件内“导出诊断”生成的 JSON 文件。
-
+- 软件内“导出脱敏诊断日志”生成的 JSON 文件；发送前仍请自行打开快速检查。

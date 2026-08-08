@@ -159,6 +159,9 @@ try {
     nodeModuleScript("vite", "bin", "vite.js"),
     "build",
   ]);
+  await runNodeStep("smoke:privacy", [
+    join(projectRoot, "scripts", "privacy-smoke.mjs"),
+  ]);
 
   previewProcess = spawn(
     process.execPath,

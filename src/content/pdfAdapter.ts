@@ -54,6 +54,13 @@ const DEFAULT_THUMBNAIL_WIDTH = 220;
 const DEFAULT_THUMBNAIL_HEIGHT = 160;
 const MAX_CANVAS_DIMENSION = 4_096;
 const MAX_CANVAS_PIXELS = 16_000_000;
+export const PDF_IMPORT_LIMITS = {
+  maxBytes: 80_000_000,
+  maxPages: 200,
+} as const;
+
+const getPdfInputBytes = (input: PdfAdapterInput) =>
+  input instanceof Blob ? input.size : input.byteLength;
 
 const finitePositive = (value: number | undefined, fallback: number) =>
   Number.isFinite(value) && (value as number) > 0
@@ -234,6 +241,12 @@ export class PdfContentAdapter implements ContentAdapter {
   }
 
   static async load(input: PdfAdapterInput, options: PdfAdapterOptions = {}) {
+    if (getPdfInputBytes(input) > PDF_IMPORT_LIMITS.maxBytes) {
+      throw new ContentAdapterError(
+        "INVALID_INPUT",
+        `PDF 超过 ${(PDF_IMPORT_LIMITS.maxBytes / 1_000_000).toFixed(0)} MB 的轻量导入限制。`,
+      );
+    }
     const normalized = normalizeOptions({
       ...options,
       title:
@@ -374,6 +387,14 @@ export class PdfContentAdapter implements ContentAdapter {
       if (this.disposed) {
         await loadingTask.destroy();
         throw new ContentAdapterError("DISPOSED", "PDF 内容已经关闭。" );
+      }
+      if (document.numPages > PDF_IMPORT_LIMITS.maxPages) {
+        await loadingTask.destroy();
+        this.document = null;
+        throw new ContentAdapterError(
+          "INVALID_INPUT",
+          `PDF 共 ${document.numPages} 页，超过 ${PDF_IMPORT_LIMITS.maxPages} 页的轻量演示限制；请拆分后再导入。`,
+        );
       }
       this.document = document;
       const documentMetadata = await collectDocumentDetails(document);

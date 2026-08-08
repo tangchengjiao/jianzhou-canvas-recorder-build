@@ -14,6 +14,7 @@
     "smoke:html": "node scripts/safe-html-smoke.mjs",
     "smoke:sink": "node scripts/recording-sink-smoke.mjs",
     "smoke:media": "node scripts/media-smoke.mjs",
+    "smoke:privacy": "node scripts/privacy-smoke.mjs",
     "verify": "node scripts/verify.mjs",
     "native:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-native-prerequisites.ps1",
     "desktop:info": "tauri info",

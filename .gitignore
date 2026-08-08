@@ -3,6 +3,7 @@ dist/
 .vite/
 coverage/
 artifacts/
+tmp/
 src-tauri/target/
 *.log
 *.tsbuildinfo

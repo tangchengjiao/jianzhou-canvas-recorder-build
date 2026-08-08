@@ -178,6 +178,10 @@ const sanitizeCss = async (
   diagnostics: StaticHtmlDiagnostic[],
 ) => {
   let css = rawCss
+    .replace(/\\([0-9a-f]{1,6})\s?/gi, (_match, hex: string) =>
+      String.fromCodePoint(Number.parseInt(hex, 16)),
+    )
+    .replace(/\\([^0-9a-f\r\n])/gi, "$1")
     .replace(/@import\s+(?:url\([^)]*\)|["'][^"']*["'])\s*;?/gi, "")
     .replace(/expression\s*\([^)]*\)/gi, "")
     .replace(/javascript\s*:/gi, "");
@@ -242,7 +246,12 @@ const sanitizeStaticHtml = async (
   for (const element of [...document.querySelectorAll("*")]) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();
-      if (name.startsWith("on") || name === "srcdoc" || name === "formaction") {
+      if (
+        name.startsWith("on") ||
+        name === "srcdoc" ||
+        name === "srcset" ||
+        name === "formaction"
+      ) {
         element.removeAttribute(attribute.name);
         removedEventHandlers += 1;
       }
@@ -310,8 +319,8 @@ const sanitizeStaticHtml = async (
 
   const resourceAttributes: Array<[string, string]> = [
     ["img[src]", "src"],
-    ["svg image[href]", "href"],
-    ["svg image[xlink\\:href]", "xlink:href"],
+    ["svg [href]", "href"],
+    ["svg [xlink\\:href]", "xlink:href"],
     ["[poster]", "poster"],
   ];
   for (const [selector, attribute] of resourceAttributes) {
@@ -328,6 +337,13 @@ const sanitizeStaticHtml = async (
   }
 
   document.documentElement.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  const contentPolicy = document.createElement("meta");
+  contentPolicy.setAttribute("http-equiv", "Content-Security-Policy");
+  contentPolicy.setAttribute(
+    "content",
+    "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'",
+  );
+  document.head.prepend(contentPolicy);
   const staticStateStyle = document.createElement("style");
   staticStateStyle.setAttribute("data-excalidraw-recorder", "static-state");
   staticStateStyle.textContent = `

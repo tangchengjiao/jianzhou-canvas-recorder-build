@@ -5,10 +5,12 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { assertPublicReleaseDirectory } from "./release-privacy.mjs";
 
 if (process.platform !== "darwin") {
   throw new Error("macOS release packaging must run on a macOS host.");
@@ -100,6 +102,7 @@ if (!cameraUsageDescription || !microphoneUsageDescription) {
 
 const releaseName = `jianzhou-canvas-recorder-beta-${version}-macos-universal`;
 const releaseDir = join(root, "artifacts", "macos", releaseName);
+await rm(releaseDir, { recursive: true, force: true });
 await mkdir(releaseDir, { recursive: true });
 
 const dmgName = `Jianzhou-Canvas-Recorder-Beta-${version}-macOS-Universal.dmg`;
@@ -122,6 +125,11 @@ execFileSync(
 
 for (const [source, destination] of [
   [join(root, "MACOS_BETA.md"), join(releaseDir, "README-内测说明.md")],
+  [join(root, "PRIVACY.md"), join(releaseDir, "PRIVACY-隐私说明.md")],
+  [
+    join(root, "output", "pdf", "见舟画布录制-用户使用手册.pdf"),
+    join(releaseDir, "USER_MANUAL-使用手册.pdf"),
+  ],
   [
     join(root, "THIRD_PARTY_NOTICES.md"),
     join(releaseDir, "THIRD_PARTY_NOTICES.md"),
@@ -136,6 +144,8 @@ const releaseFiles = [
   dmgDestination,
   appArchiveDestination,
   join(releaseDir, "README-内测说明.md"),
+  join(releaseDir, "PRIVACY-隐私说明.md"),
+  join(releaseDir, "USER_MANUAL-使用手册.pdf"),
   join(releaseDir, "THIRD_PARTY_NOTICES.md"),
 ];
 const checksums = [];
@@ -182,5 +192,11 @@ await writeFile(
   `${JSON.stringify(manifest, null, 2)}\n`,
   "utf8",
 );
+
+await assertPublicReleaseDirectory(releaseDir, [
+  ...checksums.map((item) => item.filename),
+  "SHA256SUMS.txt",
+  "release-manifest.json",
+]);
 
 console.log(JSON.stringify({ ok: true, releaseDir, manifest }, null, 2));

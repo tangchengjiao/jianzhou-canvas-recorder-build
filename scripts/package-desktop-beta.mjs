@@ -4,10 +4,12 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { assertPublicReleaseDirectory } from "./release-privacy.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const tauriConfig = JSON.parse(
@@ -26,7 +28,11 @@ const installerDir = join(
 );
 
 const installerCandidates = (await readdir(installerDir))
-  .filter((name) => name.toLowerCase().endsWith("-setup.exe"))
+  .filter(
+    (name) =>
+      name.toLowerCase().endsWith("-setup.exe") &&
+      name.includes(`_${version}_`),
+  )
   .sort();
 if (installerCandidates.length !== 1) {
   throw new Error(
@@ -34,6 +40,7 @@ if (installerCandidates.length !== 1) {
   );
 }
 
+await rm(releaseDir, { recursive: true, force: true });
 await mkdir(releaseDir, { recursive: true });
 
 const installerSource = join(installerDir, installerCandidates[0]);
@@ -41,17 +48,12 @@ const installerName = `Jianzhou-Canvas-Recorder-Beta-${version}-Windows-x64-setu
 const filesToCopy = [
   [installerSource, installerName],
   [join(root, "DESKTOP_BETA.md"), "README-内测说明.md"],
+  [join(root, "PRIVACY.md"), "PRIVACY-隐私说明.md"],
+  [
+    join(root, "output", "pdf", "见舟画布录制-用户使用手册.pdf"),
+    "USER_MANUAL-使用手册.pdf",
+  ],
   [join(root, "THIRD_PARTY_NOTICES.md"), "THIRD_PARTY_NOTICES.md"],
-  [join(root, "artifacts", "native-readiness.json"), "native-readiness.json"],
-  [join(root, "artifacts", "verify-report.json"), "web-verify-report.json"],
-  [
-    join(root, "artifacts", "installed-desktop-smoke.json"),
-    "installed-desktop-smoke.json",
-  ],
-  [
-    join(root, "artifacts", "installed-desktop-smoke.png"),
-    "installed-desktop-smoke.png",
-  ],
 ];
 
 for (const [source, destination] of filesToCopy) {
@@ -71,12 +73,6 @@ for (const [, destination] of filesToCopy) {
   });
 }
 
-await writeFile(
-  join(releaseDir, "SHA256SUMS.txt"),
-  `${checksums.map((item) => `${item.sha256}  ${item.filename}`).join("\n")}\n`,
-  "utf8",
-);
-
 const webReport = JSON.parse(
   await readFile(join(root, "artifacts", "verify-report.json"), "utf8"),
 );
@@ -85,6 +81,39 @@ const desktopReport = JSON.parse(
     join(root, "artifacts", "installed-desktop-smoke.json"),
     "utf8",
   ),
+);
+const validationSummary = {
+  schemaVersion: 1,
+  webVerify: webReport.status === "passed" ? "passed" : "failed",
+  installedDesktopSmoke: desktopReport.ok === true ? "passed" : "failed",
+  capabilities: {
+    secureContext: desktopReport.capabilities?.secureContext === true,
+    mediaRecorder: desktopReport.capabilities?.mediaRecorder === true,
+    originPrivateFileSystem: desktopReport.capabilities?.opfs === true,
+    folderDestination: desktopReport.capabilities?.folderDestinationEnabled === true,
+  },
+  checks: {
+    missingLocalFonts:
+      desktopReport.offlineFonts?.missingLocalFontFallbacks?.length ?? null,
+    unexpectedExternalRequests:
+      desktopReport.offlineFonts?.unexpectedExternalResources?.length ?? null,
+  },
+};
+const validationSummaryName = "validation-summary.json";
+await writeFile(
+  join(releaseDir, validationSummaryName),
+  `${JSON.stringify(validationSummary, null, 2)}\n`,
+  "utf8",
+);
+checksums.push({
+  filename: validationSummaryName,
+  bytes: (await stat(join(releaseDir, validationSummaryName))).size,
+  sha256: await sha256(join(releaseDir, validationSummaryName)),
+});
+await writeFile(
+  join(releaseDir, "SHA256SUMS.txt"),
+  `${checksums.map((item) => `${item.sha256}  ${item.filename}`).join("\n")}\n`,
+  "utf8",
 );
 const installer = checksums.find((item) => item.filename === installerName);
 
@@ -106,17 +135,7 @@ const manifest = {
     webview2InstallMode: "downloadBootstrapper",
   },
   validation: {
-    webVerify: webReport.status,
-    installedDesktopSmoke: desktopReport.ok === true ? "passed" : "failed",
-    secureContext: desktopReport.capabilities?.secureContext === true,
-    mediaRecorder: desktopReport.capabilities?.mediaRecorder === true,
-    originPrivateFileSystem: desktopReport.capabilities?.opfs === true,
-    folderDestination:
-      desktopReport.capabilities?.folderDestinationEnabled === true,
-    missingLocalFonts:
-      desktopReport.offlineFonts?.missingLocalFontFallbacks?.length ?? null,
-    unexpectedExternalRequests:
-      desktopReport.offlineFonts?.unexpectedExternalResources?.length ?? null,
+    ...validationSummary,
   },
   includedFiles: checksums.map((item) => basename(item.filename)),
 };
@@ -126,6 +145,12 @@ await writeFile(
   `${JSON.stringify(manifest, null, 2)}\n`,
   "utf8",
 );
+
+await assertPublicReleaseDirectory(releaseDir, [
+  ...checksums.map((item) => item.filename),
+  "SHA256SUMS.txt",
+  "release-manifest.json",
+]);
 
 console.log(
   JSON.stringify(

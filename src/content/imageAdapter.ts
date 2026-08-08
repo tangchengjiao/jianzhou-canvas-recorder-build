@@ -27,6 +27,128 @@ export type ImageAdapterOptions = {
 };
 
 const DEFAULT_IMAGE_MIME_TYPE = "image/png";
+export const IMAGE_IMPORT_LIMITS = {
+  maxBytes: 24_000_000,
+  maxDimension: 12_000,
+  maxPixels: 24_000_000,
+  headerBytes: 512_000,
+} as const;
+
+type ImageDimensions = { width: number; height: number };
+
+const uint24LittleEndian = (view: DataView, offset: number) =>
+  view.getUint8(offset) |
+  (view.getUint8(offset + 1) << 8) |
+  (view.getUint8(offset + 2) << 16);
+
+const parseJpegDimensions = (bytes: Uint8Array): ImageDimensions | null => {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = bytes[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    const length = (bytes[offset] << 8) | bytes[offset + 1];
+    if (length < 2 || offset + length > bytes.length) return null;
+    if (
+      (marker >= 0xc0 && marker <= 0xc3) ||
+      (marker >= 0xc5 && marker <= 0xc7) ||
+      (marker >= 0xc9 && marker <= 0xcb) ||
+      (marker >= 0xcd && marker <= 0xcf)
+    ) {
+      return {
+        height: (bytes[offset + 3] << 8) | bytes[offset + 4],
+        width: (bytes[offset + 5] << 8) | bytes[offset + 6],
+      };
+    }
+    offset += length;
+  }
+  return null;
+};
+
+const parseImageDimensions = (bytes: Uint8Array): ImageDimensions | null => {
+  if (bytes.length < 24) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const ascii = (start: number, length: number) =>
+    String.fromCharCode(...bytes.subarray(start, start + length));
+  if (
+    bytes[0] === 0x89 &&
+    ascii(1, 3) === "PNG" &&
+    ascii(12, 4) === "IHDR"
+  ) {
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+  if (ascii(0, 3) === "GIF") {
+    return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
+  }
+  if (ascii(0, 2) === "BM" && bytes.length >= 26) {
+    return {
+      width: Math.abs(view.getInt32(18, true)),
+      height: Math.abs(view.getInt32(22, true)),
+    };
+  }
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP" && bytes.length >= 30) {
+    const chunk = ascii(12, 4);
+    if (chunk === "VP8X") {
+      return {
+        width: uint24LittleEndian(view, 24) + 1,
+        height: uint24LittleEndian(view, 27) + 1,
+      };
+    }
+    if (chunk === "VP8 " && bytes.length >= 30) {
+      return {
+        width: view.getUint16(26, true) & 0x3fff,
+        height: view.getUint16(28, true) & 0x3fff,
+      };
+    }
+    if (chunk === "VP8L" && bytes[20] === 0x2f && bytes.length >= 25) {
+      const bits = view.getUint32(21, true);
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >>> 14) & 0x3fff) + 1,
+      };
+    }
+  }
+  const jpeg = parseJpegDimensions(bytes);
+  if (jpeg) return jpeg;
+
+  // AVIF stores display dimensions in an ImageSpatialExtents (ispe) box.
+  for (let offset = 4; offset + 16 <= bytes.length; offset += 1) {
+    if (ascii(offset, 4) !== "ispe") continue;
+    return {
+      width: view.getUint32(offset + 8),
+      height: view.getUint32(offset + 12),
+    };
+  }
+  return null;
+};
+
+const assertImageBudget = (bytes: number, dimensions: ImageDimensions) => {
+  if (bytes > IMAGE_IMPORT_LIMITS.maxBytes) {
+    throw new ContentAdapterError(
+      "INVALID_INPUT",
+      `图片超过 ${(IMAGE_IMPORT_LIMITS.maxBytes / 1_000_000).toFixed(0)} MB 的轻量导入限制。`,
+    );
+  }
+  if (
+    dimensions.width < 1 ||
+    dimensions.height < 1 ||
+    dimensions.width > IMAGE_IMPORT_LIMITS.maxDimension ||
+    dimensions.height > IMAGE_IMPORT_LIMITS.maxDimension ||
+    dimensions.width * dimensions.height > IMAGE_IMPORT_LIMITS.maxPixels
+  ) {
+    throw new ContentAdapterError(
+      "INVALID_INPUT",
+      `图片像素尺寸过大；当前最多支持 ${IMAGE_IMPORT_LIMITS.maxDimension.toLocaleString()}px 单边、${(
+        IMAGE_IMPORT_LIMITS.maxPixels / 1_000_000
+      ).toFixed(0)} 百万像素。`,
+    );
+  }
+};
 
 const isHtmlImageElement = (
   input: ImageAdapterInput,
@@ -93,6 +215,20 @@ const decodeImage = async (
       `不支持的图片类型：${blob.type || "unknown"}`,
     );
   }
+  if (blob.size > IMAGE_IMPORT_LIMITS.maxBytes) {
+    assertImageBudget(blob.size, { width: 1, height: 1 });
+  }
+  const header = new Uint8Array(
+    await blob.slice(0, IMAGE_IMPORT_LIMITS.headerBytes).arrayBuffer(),
+  );
+  const encodedDimensions = parseImageDimensions(header);
+  if (!encodedDimensions) {
+    throw new ContentAdapterError(
+      "INVALID_INPUT",
+      "无法在解码前安全识别图片尺寸，请转换为 PNG、JPEG、WebP、GIF、BMP 或标准 AVIF 后重试。",
+    );
+  }
+  assertImageBudget(blob.size, encodedDimensions);
 
   if (typeof createImageBitmap === "function") {
     try {
@@ -144,12 +280,7 @@ export class ImageContentAdapter implements ContentAdapter {
     ownsSource: boolean,
   ) {
     const { width, height } = getImageDimensions(source);
-    if (width < 1 || height < 1) {
-      throw new ContentAdapterError(
-        "LOAD_FAILED",
-        "图片没有可用的像素尺寸。",
-      );
-    }
+    assertImageBudget(0, { width, height });
 
     this.id = options.id ?? createContentId("image");
     this.source = source;
