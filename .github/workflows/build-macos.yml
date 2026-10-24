@@ -14,6 +14,8 @@ jobs:
     name: macOS Universal DMG
     runs-on: macos-15
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       CI: "true"
       APPLE_SIGNING_IDENTITY: "-"
@@ -86,3 +88,22 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+      - name: Publish macOS installer to Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")
+          TAG="v${VERSION}"
+          RELEASE_DIR="artifacts/macos/jianzhou-canvas-recorder-beta-${VERSION}-macos-universal"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "见舟画布录制 ${VERSION} · Beta" \
+              --prerelease --notes "macOS 内测安装包。使用说明与各平台下载入口见仓库 README；Windows 安装包按平台构建后补充。"
+          fi
+          cp "$RELEASE_DIR/USER_MANUAL-使用手册.pdf" "$RELEASE_DIR/Jianzhou-Canvas-Recorder-User-Manual.pdf"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$RELEASE_DIR/Jianzhou-Canvas-Recorder-Beta-${VERSION}-macOS-Universal.dmg" \
+            "$RELEASE_DIR/Jianzhou-Canvas-Recorder-User-Manual.pdf" \
+            MACOS_BETA.md PRIVACY.md THIRD_PARTY_NOTICES.md

@@ -11,7 +11,7 @@
 
 运行 `Jianzhou-Canvas-Recorder-Beta-0.1.0-beta.3-Windows-x64-setup.exe`。
 
-当前内测包尚未购买代码签名证书，Windows SmartScreen 可能显示“未知发布者”。仅从项目交付目录获取安装包，并先核对随包提供的 SHA-256。
+当前内测包尚未购买代码签名证书，Windows SmartScreen 可能显示“未知发布者”。请从[本仓库 Releases](https://github.com/tangchengjiao/jianzhou-canvas-recorder-build/releases)下载安装包。
 
 默认安装器使用系统 WebView2；Windows 10/11 通常已经包含。缺失或版本过低时，安装器需要联网下载 WebView2 Runtime。
 
